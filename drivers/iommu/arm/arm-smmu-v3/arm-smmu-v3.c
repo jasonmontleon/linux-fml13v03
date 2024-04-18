@@ -30,8 +30,25 @@
 #include "arm-smmu-v3.h"
 #include "../../dma-iommu.h"
 #include "../../iommu-sva.h"
+#if IS_ENABLED(CONFIG_ARCH_ESWIN_EIC770X_SOC_FAMILY)
+#include <dt-bindings/memory/eswin-win2030-sid.h>
+#include <linux/mfd/syscon.h>
+#include <linux/regmap.h>
 
+#define ESWIN_SMMU_IRQ_CLEAR_REG	1
+
+/* smmu interrupt clear bits */
+#define TCU_U84_EVENT_Q_IRPT_NS_CLR_BIT     9
+#define TCU_U84_PRI_Q_IRPT_NS_CLR_BIT       10
+#define TCU_U84_CMD_SYNC_IRPT_NS_CLR_BIT    11
+#define TCU_U84_GLOBAL_IRPT_NS_CLR_BIT      13
+#endif
+
+#if IS_ENABLED(CONFIG_ARCH_ESWIN_EIC770X_SOC_FAMILY)
+static bool disable_bypass = false;
+#else
 static bool disable_bypass = true;
+#endif
 module_param(disable_bypass, bool, 0444);
 MODULE_PARM_DESC(disable_bypass,
 	"Disable bypass streams such that incoming transactions from devices that are not attached to an iommu domain will report an abort back to the device and will not be allowed to pass through the SMMU.");
@@ -73,6 +90,21 @@ struct arm_smmu_option_prop {
 
 DEFINE_XARRAY_ALLOC1(arm_smmu_asid_xa);
 DEFINE_MUTEX(arm_smmu_asid_lock);
+
+#if IS_ENABLED(CONFIG_ARCH_ESWIN_EIC770X_SOC_FAMILY)
+static unsigned long get_tcu_node_status(struct arm_smmu_device *smmu)
+{
+	unsigned long reg_val;
+	unsigned long tcu_node_status = 0;
+	int i;
+
+	for (i = 0; i < 62; i++) {
+		reg_val = readl_relaxed(smmu->s_base + ARM_SMMU_TCU_NODE_STATUSn_OFFSET + (4*i));
+		tcu_node_status |= (reg_val & 0x1) << i;
+	}
+	return tcu_node_status;
+}
+#endif
 
 /*
  * Special value used by SVA when a process dies, to quiesce a CD without
@@ -851,11 +883,20 @@ static int arm_smmu_cmdq_issue_cmdlist(struct arm_smmu_device *smmu,
 		llq.prod = queue_inc_prod_n(&llq, n);
 		ret = arm_smmu_cmdq_poll_until_sync(smmu, &llq);
 		if (ret) {
+			#if IS_ENABLED(CONFIG_ARCH_ESWIN_EIC770X_SOC_FAMILY)
+			dev_err_ratelimited(smmu->dev,
+					    "CMD_SYNC timeout at 0x%08x [hwprod 0x%08x, hwcons 0x%08x], TCU_NODE_STATUS=0x%016lx\n",
+					    llq.prod,
+					    readl_relaxed(cmdq->q.prod_reg),
+					    readl_relaxed(cmdq->q.cons_reg),
+					    get_tcu_node_status(smmu));
+			#else
 			dev_err_ratelimited(smmu->dev,
 					    "CMD_SYNC timeout at 0x%08x [hwprod 0x%08x, hwcons 0x%08x]\n",
 					    llq.prod,
 					    readl_relaxed(cmdq->q.prod_reg),
 					    readl_relaxed(cmdq->q.cons_reg));
+			#endif
 		}
 
 		/*
@@ -1359,7 +1400,14 @@ static void arm_smmu_write_strtab_ent(struct arm_smmu_master *master, u32 sid,
 		u64 strw = smmu->features & ARM_SMMU_FEAT_E2H ?
 			STRTAB_STE_1_STRW_EL2 : STRTAB_STE_1_STRW_NSEL1;
 
+		#if IS_ENABLED(CONFIG_ARCH_ESWIN_EIC770X_SOC_FAMILY)
+		if (ste_live) {
+			dev_dbg(master->dev, "%s:%d, smmu_dbg, duplicated stream, sharing same ste, return!\n", __func__, __LINE__);
+			return;
+		}
+		#else
 		BUG_ON(ste_live);
+		#endif
 		dst[1] = cpu_to_le64(
 			 FIELD_PREP(STRTAB_STE_1_S1DSS, STRTAB_STE_1_S1DSS_SSID0) |
 			 FIELD_PREP(STRTAB_STE_1_S1CIR, STRTAB_STE_1_S1C_CACHE_WBRA) |
@@ -1378,7 +1426,14 @@ static void arm_smmu_write_strtab_ent(struct arm_smmu_master *master, u32 sid,
 	}
 
 	if (s2_cfg) {
+		#if IS_ENABLED(CONFIG_ARCH_ESWIN_EIC770X_SOC_FAMILY)
+		if (ste_live) {
+			dev_dbg(master->dev, "%s:%d, smmu_dbg, duplicated stream, sharing same ste, return!\n", __func__, __LINE__);
+			return;
+		}
+		#else
 		BUG_ON(ste_live);
+		#endif
 		dst[2] = cpu_to_le64(
 			 FIELD_PREP(STRTAB_STE_2_S2VMID, s2_cfg->vmid) |
 			 FIELD_PREP(STRTAB_STE_2_VTCR, s2_cfg->vtcr) |
@@ -1426,6 +1481,28 @@ static void arm_smmu_init_bypass_stes(__le64 *strtab, unsigned int nent, bool fo
 	}
 }
 
+#ifdef CONFIG_ESWIN_PCIE_VPU
+static void eswin_pcie_vpu_smmu_workaround(struct arm_smmu_device *smmu, u32 sid)
+{
+	void *strtab;
+	struct arm_smmu_strtab_cfg *cfg = &smmu->strtab_cfg;
+	struct arm_smmu_strtab_l1_desc *desc = &cfg->l1_desc[sid >> STRTAB_SPLIT];
+	struct arm_smmu_strtab_l1_desc *desc_busx;
+	int i;
+	u32 streamid;
+
+	for (i = 1; i < 256; i++) {
+		streamid = 0xff0000 + (i << 8);
+		strtab = &cfg->strtab[(streamid >> STRTAB_SPLIT) * STRTAB_L1_DESC_DWORDS];
+ 		desc_busx = &cfg->l1_desc[streamid >> STRTAB_SPLIT];
+		desc_busx->span = STRTAB_SPLIT + 1;
+		desc_busx->l2ptr = desc->l2ptr;
+		desc_busx->l2ptr_dma = desc->l2ptr_dma;
+		arm_smmu_write_strtab_l1_desc(strtab, desc_busx);
+	}
+}
+#endif
+
 static int arm_smmu_init_l2_strtab(struct arm_smmu_device *smmu, u32 sid)
 {
 	size_t size;
@@ -1451,6 +1528,12 @@ static int arm_smmu_init_l2_strtab(struct arm_smmu_device *smmu, u32 sid)
 
 	arm_smmu_init_bypass_stes(desc->l2ptr, 1 << STRTAB_SPLIT, false);
 	arm_smmu_write_strtab_l1_desc(strtab, desc);
+
+#ifdef CONFIG_ESWIN_PCIE_VPU
+	if (sid & 0xff0000) {
+		eswin_pcie_vpu_smmu_workaround(smmu, sid);
+	}
+#endif
 	return 0;
 }
 
@@ -1582,6 +1665,33 @@ out_unlock:
 	return ret;
 }
 
+#if IS_ENABLED(CONFIG_ARCH_ESWIN_EIC770X_SOC_FAMILY)
+static void eswin_smmu_irq_clear(struct arm_smmu_device *smmu, int clearbit)
+{
+	int bitmask;
+	bitmask = BIT(clearbit);
+
+	regmap_write(smmu->regmap, smmu->smmu_irq_clear_reg, bitmask);
+}
+
+static irqreturn_t eswin_smmu_irq_clear_handler(int irq, void *dev)
+{
+	struct arm_smmu_device *smmu = dev;
+
+	if (irq == smmu->evtq.q.irq) {
+			eswin_smmu_irq_clear(smmu, TCU_U84_EVENT_Q_IRPT_NS_CLR_BIT);
+	}
+	else if (irq == smmu->priq.q.irq) {
+			eswin_smmu_irq_clear(smmu, TCU_U84_PRI_Q_IRPT_NS_CLR_BIT);
+	}
+	else {
+		return IRQ_NONE;
+	}
+
+    return IRQ_WAKE_THREAD;
+}
+#endif
+
 static irqreturn_t arm_smmu_evtq_thread(int irq, void *dev)
 {
 	int i, ret;
@@ -1600,9 +1710,9 @@ static irqreturn_t arm_smmu_evtq_thread(int irq, void *dev)
 			if (!ret || !__ratelimit(&rs))
 				continue;
 
-			dev_info(smmu->dev, "event 0x%02x received:\n", id);
+			dev_dbg(smmu->dev, "event 0x%02x received:\n", id);
 			for (i = 0; i < ARRAY_SIZE(evt); ++i)
-				dev_info(smmu->dev, "\t0x%016llx\n",
+				dev_dbg(smmu->dev, "\t0x%016llx\n",
 					 (unsigned long long)evt[i]);
 
 			cond_resched();
@@ -1685,6 +1795,10 @@ static irqreturn_t arm_smmu_gerror_handler(int irq, void *dev)
 {
 	u32 gerror, gerrorn, active;
 	struct arm_smmu_device *smmu = dev;
+
+	#if IS_ENABLED(CONFIG_ARCH_ESWIN_EIC770X_SOC_FAMILY)
+	eswin_smmu_irq_clear(smmu, TCU_U84_GLOBAL_IRPT_NS_CLR_BIT);
+	#endif
 
 	gerror = readl_relaxed(smmu->base + ARM_SMMU_GERROR);
 	gerrorn = readl_relaxed(smmu->base + ARM_SMMU_GERRORN);
@@ -2287,6 +2401,21 @@ static __le64 *arm_smmu_get_step_for_sid(struct arm_smmu_device *smmu, u32 sid)
 
 	return step;
 }
+/*bus0 all 256 ste2 ttbr point the same.*/
+
+#ifdef CONFIG_ESWIN_PCIE_VPU
+static void eswin_vpu_pcie_ste2_same_ttbr(struct arm_smmu_master *master, u32 sid)
+{
+	struct arm_smmu_device *smmu = master->smmu;
+	__le64 *step;
+	int i;
+
+	for (i = 1; i < 256; i++) {
+		step = arm_smmu_get_step_for_sid(smmu, sid + i);
+		arm_smmu_write_strtab_ent(master, sid + i, step);
+	}
+}
+#endif
 
 static void arm_smmu_install_ste_for_dev(struct arm_smmu_master *master)
 {
@@ -2305,7 +2434,13 @@ static void arm_smmu_install_ste_for_dev(struct arm_smmu_master *master)
 			continue;
 
 		arm_smmu_write_strtab_ent(master, sid, step);
+#ifdef CONFIG_ESWIN_PCIE_VPU
+		if (sid == 0xff0000) {
+			eswin_vpu_pcie_ste2_same_ttbr(master, sid);
+		}
+#endif
 	}
+
 }
 
 static bool arm_smmu_ats_supported(struct arm_smmu_master *master)
@@ -2408,6 +2543,15 @@ static void arm_smmu_disable_pasid(struct arm_smmu_master *master)
 	pci_disable_pasid(pdev);
 }
 
+#if IS_ENABLED(CONFIG_ARCH_ESWIN_EIC770X_SOC_FAMILY)
+static void arm_smmu_attach_ref_release(struct kref *kref)
+{
+	/* no related data needs to be released when kref is 0 */
+	pr_debug("smmu_dbg, %s\n", __func__);
+	return;
+}
+#endif
+
 static void arm_smmu_detach_dev(struct arm_smmu_master *master)
 {
 	unsigned long flags;
@@ -2424,6 +2568,19 @@ static void arm_smmu_detach_dev(struct arm_smmu_master *master)
 
 	master->domain = NULL;
 	master->ats_enabled = false;
+
+	#if IS_ENABLED(CONFIG_ARCH_ESWIN_EIC770X_SOC_FAMILY)
+	/* Eswin, for generic dev only.If other masters are still attached to this domain,
+	*  do NOT allow to change the ste right now
+	*/
+	if (!dev_is_pci(master->dev)) {
+		if (!kref_put(&smmu_domain->attach_refcount, arm_smmu_attach_ref_release)) {
+			dev_dbg(master->dev, "smmu_dbg, %s:%d, other masters are still on smmu_domain, return!\n",
+				__func__, __LINE__);
+			return;
+		}
+	}
+	#endif
 	arm_smmu_install_ste_for_dev(master);
 }
 
@@ -2452,7 +2609,14 @@ static int arm_smmu_attach_dev(struct iommu_domain *domain, struct device *dev)
 		return -EBUSY;
 	}
 
+	#if IS_ENABLED(CONFIG_ARCH_ESWIN_EIC770X_SOC_FAMILY)
+	/* Eswin, to support duplicated streamID within one group/smmu_domain, skip detach for generic devices*/
+	if (dev_is_pci(dev)) {
+		arm_smmu_detach_dev(master);
+	}
+	#else
 	arm_smmu_detach_dev(master);
+	#endif
 
 	mutex_lock(&smmu_domain->init_mutex);
 
@@ -2463,6 +2627,11 @@ static int arm_smmu_attach_dev(struct iommu_domain *domain, struct device *dev)
 			smmu_domain->smmu = NULL;
 			goto out_unlock;
 		}
+		#if IS_ENABLED(CONFIG_ARCH_ESWIN_EIC770X_SOC_FAMILY)
+		if (!dev_is_pci(dev)) { //Eswin, to support generic devices share the same streamID, i.e in the same domain
+			kref_init(&smmu_domain->attach_refcount);
+		}
+		#endif
 	} else if (smmu_domain->smmu != smmu) {
 		ret = -EINVAL;
 		goto out_unlock;
@@ -2475,6 +2644,17 @@ static int arm_smmu_attach_dev(struct iommu_domain *domain, struct device *dev)
 		ret = -EINVAL;
 		goto out_unlock;
 	}
+	#if IS_ENABLED(CONFIG_ARCH_ESWIN_EIC770X_SOC_FAMILY)
+	else if (!dev_is_pci(dev)){
+		/* Eswin,for supportting generic devices sharing the same streamID dev.
+		*  This domain has already been initialized by the first dev that was
+		*  attached to this domain previously.So, only needs to increase attach_refcount.
+		*/
+		kref_get(&smmu_domain->attach_refcount);
+		dev_dbg(dev, "smmu_dbg, generic dev sharing the same domain, attach_refcount = %d after add 1\n",
+			kref_read(&smmu_domain->attach_refcount));
+	}
+	#endif
 
 	master->domain = smmu_domain;
 
@@ -2633,8 +2813,14 @@ static int arm_smmu_insert_master(struct arm_smmu_device *smmu,
 			dev_warn(master->dev,
 				 "stream %u already in tree from dev %s\n", sid,
 				 dev_name(existing_master->dev));
+			#if IS_ENABLED(CONFIG_ARCH_ESWIN_EIC770X_SOC_FAMILY)
+			/*duplicated streamID found, this feature is needed in EIC770X */
+			ret = 0;
+			continue;
+			#else
 			ret = -EINVAL;
 			break;
+			#endif
 		}
 	}
 
@@ -2739,6 +2925,147 @@ static void arm_smmu_release_device(struct device *dev)
 	kfree(master);
 }
 
+#if IS_ENABLED(CONFIG_ARCH_ESWIN_EIC770X_SOC_FAMILY)
+static void arm_smmu_group_lookup_delete(void *iommu_data)
+{
+	struct arm_smmu_group *smmu_group = iommu_data;
+	struct arm_smmu_device *smmu;
+
+	if (WARN_ON_ONCE(smmu_group == NULL))
+		return;
+
+	if (IS_ERR(smmu_group))
+		return;
+
+	smmu = smmu_group->smmu;
+	mutex_lock(&smmu->smmu_groups_mutex);
+	rb_erase(&smmu_group->node, &smmu->smmu_groups);
+	mutex_unlock(&smmu->smmu_groups_mutex);
+
+	kfree(smmu_group);
+}
+
+static struct iommu_group *arm_smmu_group_lookup(struct device *dev)
+{
+	struct arm_smmu_device *smmu;
+	struct arm_smmu_master *master = dev_iommu_priv_get(dev);
+	struct iommu_fwspec *fwspec = dev_iommu_fwspec_get(dev);
+	struct rb_node *node;
+	struct arm_smmu_group *smmu_group;
+	u32 sid;
+
+	if (!master)
+		return ERR_PTR(-EFAULT);
+
+	smmu = master->smmu;
+	lockdep_assert_held(&smmu->smmu_groups_mutex);
+
+	/* pick the first sid, since only one sid for each device is allowed */
+	sid = fwspec->ids[0];
+
+	node = smmu->smmu_groups.rb_node;
+	while (node) {
+		smmu_group = rb_entry(node, struct arm_smmu_group, node);
+		if (smmu_group->streamid < sid)
+			node = node->rb_right;
+		else if (smmu_group->streamid > sid)
+			node = node->rb_left;
+		else {
+			return iommu_group_ref_get(smmu_group->group); // Found, iommu_group refcnt add, then return iommu_group
+		}
+	}
+
+	return NULL;
+}
+
+static struct arm_smmu_group *arm_smmu_insert_to_group_lookup(struct device *dev, struct iommu_group *group)
+{
+	struct arm_smmu_device *smmu;
+	struct arm_smmu_master *master = dev_iommu_priv_get(dev);
+	struct iommu_fwspec *fwspec = dev_iommu_fwspec_get(dev);
+	struct arm_smmu_group *new_smmu_group, *cur_smmu_group;
+	struct rb_node **new_node, *parent_node = NULL;
+
+	if (!master)
+		return ERR_PTR(-EFAULT);
+
+	smmu = master->smmu;
+	lockdep_assert_held(&smmu->smmu_groups_mutex);
+
+	new_smmu_group = kzalloc(sizeof(*new_smmu_group), GFP_KERNEL);
+	if (!new_smmu_group)
+		return ERR_PTR(-ENOMEM);
+	/* pick the first sid, since only one sid for each device is allowed */
+	new_smmu_group->smmu = smmu;
+	new_smmu_group->streamid = fwspec->ids[0];
+	new_smmu_group->group = group;
+
+	new_node = &(smmu->smmu_groups.rb_node);
+	while (*new_node) {
+		cur_smmu_group = rb_entry(*new_node, struct arm_smmu_group,
+						node);
+		parent_node = *new_node;
+		if (cur_smmu_group->streamid > new_smmu_group->streamid) {
+			new_node = &((*new_node)->rb_left);
+		} else if (cur_smmu_group->streamid < new_smmu_group->streamid) {
+			new_node = &((*new_node)->rb_right);
+		} else {
+			dev_warn(dev,
+					"group %u already in tree\n",
+					cur_smmu_group->streamid);
+			kfree(new_smmu_group);
+			return ERR_PTR(-EINVAL);
+		}
+	}
+
+	rb_link_node(&new_smmu_group->node, parent_node, new_node);
+	rb_insert_color(&new_smmu_group->node, &smmu->smmu_groups);
+
+	return new_smmu_group;
+}
+
+static struct iommu_group *arm_smmu_device_group(struct device *dev)
+{
+	struct iommu_group *group;
+	struct arm_smmu_device *smmu;
+	struct arm_smmu_master *master = dev_iommu_priv_get(dev);
+	struct arm_smmu_group *smmu_group = NULL;
+
+	if (!master)
+		return ERR_PTR(-EFAULT);
+
+	smmu = master->smmu;
+	/*
+	 * We don't support devices sharing stream IDs other than PCI RID
+	 * aliases, since the necessary ID-to-device lookup becomes rather
+	 * impractical given a potential sparse 32-bit stream ID space.
+	 */
+	if (dev_is_pci(dev))
+		group = pci_device_group(dev);
+	else {
+		mutex_lock(&smmu->smmu_groups_mutex);
+		group = arm_smmu_group_lookup(dev);
+		if (!group) {
+			dev_dbg(dev, "smmu_dbg, generic dev,group was NOT found in lut, alloc new group!\n");
+			group = generic_device_group(dev);
+
+			if (group) {
+				smmu_group = arm_smmu_insert_to_group_lookup(dev, group);
+				if (!IS_ERR(smmu_group)) {
+					iommu_group_set_iommudata(group, smmu_group, arm_smmu_group_lookup_delete);
+					dev_dbg(dev, "smmu_dbg, generic dev,new smmu_group added in lut\n");
+				}
+			}
+		}
+		else {
+			dev_dbg(dev, "smmu_dbg, generic dev,group was found in lut!\n");
+		}
+		mutex_unlock(&smmu->smmu_groups_mutex);
+	}
+
+	return group;
+}
+#else
 static struct iommu_group *arm_smmu_device_group(struct device *dev)
 {
 	struct iommu_group *group;
@@ -2755,6 +3082,7 @@ static struct iommu_group *arm_smmu_device_group(struct device *dev)
 
 	return group;
 }
+#endif
 
 static int arm_smmu_enable_nesting(struct iommu_domain *domain)
 {
@@ -3115,6 +3443,11 @@ static int arm_smmu_init_structures(struct arm_smmu_device *smmu)
 	mutex_init(&smmu->streams_mutex);
 	smmu->streams = RB_ROOT;
 
+	#if IS_ENABLED(CONFIG_ARCH_ESWIN_EIC770X_SOC_FAMILY)
+	mutex_init(&smmu->smmu_groups_mutex);
+	smmu->smmu_groups = RB_ROOT;
+	#endif
+
 	ret = arm_smmu_init_queues(smmu);
 	if (ret)
 		return ret;
@@ -3221,10 +3554,17 @@ static void arm_smmu_setup_unique_irqs(struct arm_smmu_device *smmu)
 	/* Request interrupt lines */
 	irq = smmu->evtq.q.irq;
 	if (irq) {
+		#if IS_ENABLED(CONFIG_ARCH_ESWIN_EIC770X_SOC_FAMILY)
+		ret = devm_request_threaded_irq(smmu->dev, irq, eswin_smmu_irq_clear_handler,
+						arm_smmu_evtq_thread,
+						IRQF_ONESHOT,
+						"arm-smmu-v3-evtq", smmu);
+		#else
 		ret = devm_request_threaded_irq(smmu->dev, irq, NULL,
 						arm_smmu_evtq_thread,
 						IRQF_ONESHOT,
 						"arm-smmu-v3-evtq", smmu);
+		#endif
 		if (ret < 0)
 			dev_warn(smmu->dev, "failed to enable evtq irq\n");
 	} else {
@@ -3244,11 +3584,19 @@ static void arm_smmu_setup_unique_irqs(struct arm_smmu_device *smmu)
 	if (smmu->features & ARM_SMMU_FEAT_PRI) {
 		irq = smmu->priq.q.irq;
 		if (irq) {
+			#if IS_ENABLED(CONFIG_ARCH_ESWIN_EIC770X_SOC_FAMILY)
+			ret = devm_request_threaded_irq(smmu->dev, irq, eswin_smmu_irq_clear_handler,
+							arm_smmu_priq_thread,
+							IRQF_ONESHOT,
+							"arm-smmu-v3-priq",
+							smmu);
+			#else
 			ret = devm_request_threaded_irq(smmu->dev, irq, NULL,
 							arm_smmu_priq_thread,
 							IRQF_ONESHOT,
 							"arm-smmu-v3-priq",
 							smmu);
+			#endif
 			if (ret < 0)
 				dev_warn(smmu->dev,
 					 "failed to enable priq irq\n");
@@ -3539,8 +3887,10 @@ static int arm_smmu_device_hw_probe(struct arm_smmu_device *smmu)
 
 	if (reg & IDR0_HYP) {
 		smmu->features |= ARM_SMMU_FEAT_HYP;
+		#ifdef CONFIG_ARM64
 		if (cpus_have_cap(ARM64_HAS_VIRT_HOST_EXTN))
 			smmu->features |= ARM_SMMU_FEAT_E2H;
+		#endif
 	}
 
 	/*
@@ -3864,6 +4214,27 @@ static int arm_smmu_device_probe(struct platform_device *pdev)
 	} else {
 		smmu->page1 = smmu->base;
 	}
+
+	#if IS_ENABLED(CONFIG_ARCH_ESWIN_EIC770X_SOC_FAMILY)
+	/* eswin, map the tcu microarchitectural register region */
+	smmu->s_base = arm_smmu_ioremap(dev, ioaddr + ARM_SMMU_S_BASE, ARM_SMMU_S_AND_TCU_MICRO_REG_SZ);
+	if (IS_ERR(smmu->s_base))
+		return PTR_ERR(smmu->s_base);
+
+	/* eswin, syscon devie is used for clearing the smmu interrupt */
+	smmu->regmap = syscon_regmap_lookup_by_phandle(dev->of_node, "eswin,syscfg");
+	if (IS_ERR(smmu->regmap)) {
+		dev_err(smmu->dev, "No syscfg phandle specified\n");
+		return PTR_ERR(smmu->regmap);
+	}
+
+	ret = of_property_read_u32_index(dev->of_node, "eswin,syscfg", ESWIN_SMMU_IRQ_CLEAR_REG,
+					&smmu->smmu_irq_clear_reg);
+	if (ret) {
+		dev_err(dev, "can't get SMMU irq clear reg offset (%d)\n", ret);
+		return ret;
+	}
+	#endif
 
 	/* Interrupt lines */
 
