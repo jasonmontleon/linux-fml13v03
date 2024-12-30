@@ -27,6 +27,7 @@
 #include "hetero_ioctl.h"
 #include "internal_interface.h"
 #include "hetero_perf.h"
+#include "nvdla_lowlevel.h"
 
 static struct proc_dir_entry *proc_esnpu;
 static int g_perf = 0;
@@ -38,6 +39,7 @@ static host_node_t *g_host_node[2] = { NULL };
 static wait_queue_head_t g_perf_wait_list[2];
 static u32 g_stat_titok[2] = { -1 };
 
+extern  u32 get_perf_timer_cnt(u32 numa_id);
 void handle_perf_switch(struct nvdla_device *ndev, bool enable)
 {
 	struct win_engine *engine;
@@ -190,17 +192,48 @@ static int npu_stat_show(struct seq_file *m, void *p)
 {
 	int i = 0;
 	struct nvdla_device *ndev;
+	emission_node_t *pemission_node;
+	u64 total_hwexec_time = 0;
+	u32 frame_start = 0;
+	u64 gap_adjust = 0, delta_frame = 0;
+	u32 curr_rtc = 0;
 	uint64_t start_stat_time = ktime_get_real_ns();
+	int ret;
+
 	for (i = 0; i < 2; i++) {
 		ndev = get_nvdla_dev(i);
-		if (!ndev) {
+		if (!ndev || !ndev->emission_base) {
 			continue;
 		}
-		if(atomic64_read(&ndev->start_lock_time) > atomic64_read(&ndev->end_lock_time)){
-			start_stat_time = atomic64_read(&ndev->start_lock_time);
+
+		ret = npu_pm_get(ndev);
+		if (ret < 0) {
+			dla_error("%s, %d, pm get sync err, ret=%d.\n", __func__,
+				__LINE__, ret);
+			return ret;
 		}
-		seq_printf(m, "npu%d %llu %llu %llu\n",i, start_stat_time,
-		           atomic64_read(&ndev->total_lock_time), atomic64_read(&ndev->total_hwexec_time));
+
+		gap_adjust = 0;
+		pemission_node = (emission_node_t *)ndev->emission_base;
+		total_hwexec_time = pemission_node->total_ran_time;
+		frame_start = pemission_node->frame_start_ts;
+		if(frame_start)
+		{
+			curr_rtc = get_perf_timer_cnt(i);
+			if(curr_rtc > frame_start) {
+				delta_frame = (curr_rtc - frame_start);
+			} else {
+				delta_frame = (-1U - frame_start + curr_rtc);
+			}
+			gap_adjust = delta_frame * 10000 / 495; // timer3 channel 7 clk 49.5MHz.
+		}
+
+		seq_printf(m, "npu%d %llu %llu %llu %llu\n",i, start_stat_time,
+		           (total_hwexec_time * 10000) / 495 + gap_adjust,
+		           (total_hwexec_time * 10000) / 495,
+		           atomic64_read(&ndev->total_frame_done));
+
+		npu_pm_put(ndev);
 	}
 	return 0;
 }
@@ -211,11 +244,30 @@ static int npu_info_show(struct seq_file *m, void *p)
 	npu_e31_perf_t *op_stat;
 	s16 op_idx;
 	unsigned long flags;
+	u32 task_count[2] = { 0 };
+	struct host_frame_desc *frame = NULL;
+	struct nvdla_device *ndev;
+	struct win_engine *engine;
 
+	for (i = 0; i < 2; i++) {
+		ndev = get_nvdla_dev(i);
+		if (!ndev || !ndev->win_engine) {
+			continue;
+		}
+		engine = (struct win_engine *)ndev->win_engine;
+		spin_lock_irqsave(&engine->executor_lock, flags);
+		list_for_each_entry(frame, &engine->sched_frame_list, sched_node)
+		{
+			task_count[i]++;
+		}
+		spin_unlock_irqrestore(&engine->executor_lock, flags);
+	}
+
+	seq_printf(m, "current task queue count:%u, %u\n",task_count[0], task_count[1]);
 	if (g_perf == 0) {
-		seq_printf(
-			m,
-			"The perf is not turned on, pls first turn on the perf.\n");
+		// seq_printf(
+		// 	m,
+		// 	"The perf is not turned on, pls first turn on the perf.\n");
 		return 0;
 	}
 
@@ -290,7 +342,7 @@ static int stat_open(struct inode *inode, struct file *flip)
 static int npu_conf_show(struct seq_file *m, void *p)
 {
 	int i = 0;
-	unsigned long rate = 0, volt = 0;
+	unsigned long rate = 0, volt = 0, llc_rate;
 	struct nvdla_device *ndev = NULL;
 
 	for (i = 0; i < 2; i++)	{
@@ -300,8 +352,9 @@ static int npu_conf_show(struct seq_file *m, void *p)
 		}
 		volt = regulator_get_voltage(ndev->npu_regulator);
 		rate = clk_get_rate(ndev->core_clk);
+		llc_rate = clk_get_rate(ndev->llc_aclk);
 
-		seq_printf(m, "npu%d %lu %lu\n", i, volt, rate);
+		seq_printf(m, "npu%d %lu %lu %lu \n", i, volt, rate, llc_rate);
 	}
 	return 0;
 }
@@ -400,10 +453,11 @@ static struct proc_ops proc_conf_fops = {
 	.proc_release = single_release,
 };
 
-static void *tmp = NULL;
 
 int npu_create_procfs(void)
 {
+	void *tmp = NULL;
+
 	proc_esnpu = proc_mkdir("esnpu", NULL);
 	if (proc_esnpu == NULL) {
 		dla_error("create proc esnpu dir err.\n");
@@ -435,7 +489,7 @@ int npu_create_procfs(void)
 	init_waitqueue_head(&g_perf_wait_list[0]);
 	init_waitqueue_head(&g_perf_wait_list[1]);
 
-	tmp = kzalloc(sizeof(s16) * MAX_OP_NUM * 2, GFP_KERNEL);
+	tmp = vzalloc(sizeof(s16) * MAX_OP_NUM * 2);
 	if (!tmp) {
 		goto err_mem;
 	}
@@ -458,9 +512,10 @@ err_info:
 
 void npu_remove_procfs(void)
 {
-	if (tmp != NULL) {
-		kfree(tmp);
+	if (g_cfg_seq[0][IDX_START] != NULL) {
+		vfree(g_cfg_seq[0][IDX_START]);
 	}
+
 	remove_proc_entry("info", proc_esnpu);
 	remove_proc_entry("perf", proc_esnpu);
 	remove_proc_entry("conf", proc_esnpu);
