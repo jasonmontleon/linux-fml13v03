@@ -2,7 +2,9 @@
 dtb-$(CONFIG_SOC_ESWIN) += eswin-win2030.dtb \
 							eic7700-evb.dtb \
 							eic7700-evb-a2.dtb \
+							eic7700-evb-a2-mipi.dtb \
 							eic7700-evb-a3.dtb \
+							eic7700-evb-a3-mipi.dtb \
 							eic7700-hifive-premier-p550.dtb \
 							eic7702-evb-a1.dtb \
 							eic7700-z530.dtb \
@@ -10,9 +12,28 @@ dtb-$(CONFIG_SOC_ESWIN) += eswin-win2030.dtb \
 							eic7702-evb-a1-interleave.dtb \
 							eic7702-tb.dtb \
 							eic7700-sbc-a1.dtb \
-							eic7700-vpu7702.dtb \
+							eic7700-sbc-a1-mipi.dtb\
 							eic7700-osm.dtb \
 							eic7702-d560.dtb \
+							eic7702-d560-mipi.dtb \
+							eic7702-d560-d0mipi-d1hdmi.dtb \
+							eic7702-d560-d0hdmi-d1mipi.dtb \
+							eic7702-d560a.dtb \
+							eic7702-d560a-mipi.dtb \
+							eic7702-d560a-d0mipi-d1hdmi.dtb \
+							eic7702-d560a-d0hdmi-d1mipi.dtb \
+							eic7702-d560-interleave.dtb \
+							vpu7702-pcie.dtb \
+							vpu7702-evb.dtb \
 							eic7702-deepcomputing-fml13v03.dtb \
-							eic7702-deepcomputing-fml13v03-low-power.dtb
+							eic7702-deepcomputing-fml13v03-evt.dtb \
+							eic7700-ce1.dtb \
+							eic7700-ce1-mipi.dtb \
+							u2-evb.dtb \
+							m2-evb.dtb \
+							ebc7702-p01-d560.dtb \
+							ebc7702-p01-pcie.dtb \
+							eic7700-vela.dtb \
+							eic7700-vela-mipi.dtb
+subdir-y += overlays
 obj-$(CONFIG_BUILTIN_DTB) += $(addsuffix .o, $(dtb-y))
