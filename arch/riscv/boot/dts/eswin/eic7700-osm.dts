@@ -33,6 +33,7 @@
 #include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
+//#include "eic7700-osm-camera.dtsi"
 
 /* Clock frequency (in Hz) of the PCB crystal for rtcclk */
 
@@ -40,8 +41,7 @@
 	#address-cells = <2>;
 	#size-cells = <2>;
 	model = "ESWIN EIC7700 OSM";
-	compatible = "sifive,hifive-unmatched-a00", "sifive,fu740-c000",
-		     "sifive,fu740", "eswin,eic7700";
+	compatible = "eswin,eic7x";
 
 	aliases {
 		serial0 = &d0_uart0;
@@ -93,9 +93,14 @@
 			reg = <0x0 0x59000000 0x0 0x400000>;
 		};
 
-		g2d_4GB_boundary_reserved_4k {
+		ramoops@fff00000 {
+			compatible = "ramoops";
+			reg = <0x0 0xfff00000 0x0 0x100000>;
+			console-size = <0x40000>;
+			record-size = <0x40000>;
+			ftrace-size = <0x40000>;
+			pmsg-size = <0x40000>;
 			no-map;
-			reg = <0x0 0xfffff000 0x0 0x1000>;
 		};
 
 		g2d_8GB_boundary_reserved_4k {
@@ -114,37 +119,19 @@
 			no-map;
 		};
 	};
+	reg_vcc1v8: vcc1v8 {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc1v8";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+	};
 };
 
 &d0_clock {
 	status = "okay";
 	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_gpio28_default>;
-	cpu-voltage-gpios = <&porta 28 GPIO_ACTIVE_HIGH>;
-	cpu-default-frequency = <CLK_FREQ_1600M>;
-};
-
-&d0_cpu_opp_table {
-	opp-1500000000 {
-		opp-hz = /bits/ 64 <CLK_FREQ_1500M>;
-		opp-microvolt = <900000>;
-		clock-latency-ns = <70000>;
-	};
-	opp-1600000000 {
-		opp-hz = /bits/ 64 <CLK_FREQ_1600M>;
-		opp-microvolt = <900000>;
-		clock-latency-ns = <70000>;
-	};
-	opp-1700000000 {
-		opp-hz = /bits/ 64 <CLK_FREQ_1700M>;
-		opp-microvolt = <900000>;
-		clock-latency-ns = <70000>;
-	};
-	opp-1800000000 {
-		opp-hz = /bits/ 64 <CLK_FREQ_1800M>;
-		opp-microvolt = <900000>;
-		clock-latency-ns = <70000>;
-	};
+	pinctrl-0 = <&pinctrl_gpio94_default>;
+	cpu-voltage-gpios = <&portc 30 GPIO_ACTIVE_HIGH>;
 };
 
 &d0_reset {
@@ -317,10 +304,6 @@
 	dc_out: port {
 		#address-cells = <1>;
 		#size-cells = <0>;
-		dc_out_dsi: endpoint@0 {
-			reg = <0>;
-			remote-endpoint = <&dsi_input>;
-		};
 		dc_out_dpi1: endpoint@1 {
 			reg = <1>;
 			remote-endpoint = <&vd_input>;
@@ -347,50 +330,6 @@
 
 &dsi_output {
 	status = "okay";
-};
-
-&dsi_controller {
-	status = "okay";
-	ports {
-		#address-cells = <1>;
-		#size-cells = <0>;
-		port@0 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <0>;
-			dsi_input: endpoint {
-				remote-endpoint = <&dc_out_dsi>;
-			};
-		};
-		port@1 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <1>;
-			mipi_dsi_out: endpoint {
-				remote-endpoint = <&panel_in>;
-			};
-		};
-	};
-
-	dsi_panel:dsi_panel@0 {
-		compatible = "eswin,generic-panel";
-		reg = <0>;
-		dsi,format = <0>; //RGB888:0, RGB666:1, RGB565:3
-		dsi,lanes = <4>;
-		port {
-			panel_in: endpoint {
-				remote-endpoint = <&mipi_dsi_out>;
-			};
-		};
-	};
-};
-
-&dsi_panel {
-	status = "okay";
-	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_gpio5_default &pinctrl_gpio111_default>;
-	backlight0-gpios = <&porta 5 GPIO_ACTIVE_HIGH>;
-	rst-gpios = <&portd 15 GPIO_ACTIVE_HIGH>;
 };
 
 &dw_hdmi {
@@ -459,36 +398,20 @@
 	status = "disabled";
 };
 
-&isp_0 {
+&vi_subsys {
 	status = "okay";
 };
 
+&isp_0 {
+	status = "disabled";
+};
+
 &isp_1 {
-	status = "okay";
+	status = "disabled";
 };
 
 &dewarp {
 	status = "okay";
-};
-
-&mipi_dphy_rx {
-	status = "okay";
-};
-
-&csi_dma0 {
-	status = "okay";
-};
-
-&csi_dma1 {
-	status = "disabled";
-};
-
-&csi2_0 {
-	status = "okay";
-};
-
-&csi2_1 {
-	status = "disabled";
 };
 
 &sdhci_emmc {
@@ -515,6 +438,9 @@
 	disable-wp;
 	no-sdio;
 	no-mmc;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_gpio13_default>;
+	cd-gpios = <&porta 13 GPIO_ACTIVE_LOW>;
 };
 
 &sdio1 {
@@ -528,6 +454,7 @@
 	non-removable;
 	no-sd;
 	no-mmc;
+	vqmmc-supply = <&reg_vcc1v8>;
 	aw3155:wifi_aw3155@0 {
 		compatible = "aml_w1_sdio";
 		reg = <0x0>;
@@ -540,6 +467,12 @@
 		rst-gpios = <&portb 2 GPIO_ACTIVE_HIGH>;
 
 	};
+	mdhd_wlan {
+		compatible = "android,bcmdhd_wlan";
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_gpio34_default>;
+		gpio_wl_reg_on = <&portb 2 GPIO_ACTIVE_HIGH>;
+	};
 };
 
 &d0_gmac0 {
@@ -550,6 +483,7 @@
 	eswin,rgmiisel = <&pinctrl 0x290 0x3>;
 	eswin,led-cfgs = <0x6100 0xa40 0x420>;
 	eswin,phyaddr = <1>;
+	phy-mode = "rgmii-txid";
 	dly-param-1000m = <0x20202020 0x64207820 0x20202020>;
 	dly-param-100m = <0x20202020 0x6E206E20 0x20202020>;
 	dly-param-10m = <0 0 0>;
@@ -563,6 +497,7 @@
 	rst-gpios = <&porta 16 GPIO_ACTIVE_LOW>;
 	eswin,rgmiisel = <&pinctrl 0x294 0x3>;
 	eswin,led-cfgs = <0x6100 0xa40 0x420>;
+	phy-mode = "rgmii-txid";
 	dly-param-1000m = <0x25252525 0x80268025 0x26262626>;
 	dly-param-100m = <0x48484848 0x80588048 0x58585858>;
 	dly-param-10m = <0 0 0>;
@@ -623,6 +558,8 @@
 
 &d0_uart3 {
 	/* pin header */
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_uart3_default>;
 	status = "okay";
 };
 
@@ -632,8 +569,18 @@
 };
 
 &ssi0 {
-	/* unused */
-	status = "disabled";
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_spi1_default>;
+	num-cs = <2>;
+	spi-flash@1 {
+		compatible = "jedec,spi-nor";
+		reg = <1>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+		spi-max-frequency = <4800000>;
+		rx-sample-delay-ns = <10>;
+	};
 };
 
 &ssi1 {
@@ -645,8 +592,6 @@
 	/* spi flash */
 	status = "okay";
 	num-cs = <1>;
-	cs-gpios = <&portd 0 GPIO_ACTIVE_LOW>;
-	wp-gpios = <&portd 4 GPIO_ACTIVE_LOW>;
 	spi-flash@0 {
 		compatible = "winbond,w25q128jw",
 					"jedec,spi-nor";
@@ -692,11 +637,19 @@
 
 &fan_control {
 	status = "okay";
-	eswin,pwm_inverted;
+	pwms = <&pwm0 0 100000 PWM_POLARITY_INVERTED>;
 };
 
 &d0_i2c0 {
-	status = "disabled";
+	status = "okay";
+	eeprom@51 {
+		compatible = "atmel,24c64";
+		reg = <0x51>;
+	};
+	temp-sense@4e {
+		compatible = "national,lm75";
+		reg = <0x4e>;
+	};
 };
 
 &d0_i2c1 {
@@ -722,6 +675,10 @@
 				remote-endpoint = <&d0_i2s1_endpoint>;
 			};
 		};
+	};
+	rtc@32 {
+		compatible = "epson,rx8010";
+		reg = <0x32>;
 	};
 };
 
@@ -772,7 +729,7 @@
 		compatible = "einno,es5340";
 		reg = <0xf>;
 		eswin,regulator_default-microvolt=<1000000>;
-		eswin,regulator_label = "supply vdd1", "npu vdd1", "npu current1", "npu temperature1";
+		eswin,regulator_label = "Supply VDD", "NPU Voltage", "NPU CURRENT", "NPU Temperature";
 		label = "npu_vdd";
 		regulators{
 			npu_vcc1:npu_svcc{
@@ -797,7 +754,7 @@
 	pinctrl-names = "default", "sleep";
 	pinctrl-0 = <&pinctrl_pwm0_default>;
 	pinctrl-1 = <&pinctrl_gpio68_default>;
-	enable-gpios = <&portc 4 GPIO_ACTIVE_HIGH>;
+	fan-pwm-gpios = <&portc 4 GPIO_ACTIVE_HIGH>;
 };
 
 &pvt0 {
@@ -828,26 +785,15 @@
 	status = "okay";
 };
 
-&timer0 {
-	status = "okay";
-};
-
-&timer1 {
-	status = "okay";
-};
-
-&timer2 {
-	status = "okay";
-};
-
-&timer3 {
-	status = "okay";
-};
-
 &pinctrl {
 	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_gpio7_default &pinctrl_gpio8_default &pinctrl_gpio9_default &pinctrl_gpio10_default
+			&pinctrl_gpio71_default &pinctrl_gpio73_default &pinctrl_gpio74_default &pinctrl_gpio75_default
+			&pinctrl_gpio76_default &pinctrl_gpio77_default &pinctrl_gpio79_default &pinctrl_gpio80_default
+			&pinctrl_gpio83_default &pinctrl_gpio84_default &pinctrl_gpio85_default &pinctrl_gpio86_default
+			&pinctrl_gpio87_default &pinctrl_gpio89_default &pinctrl_gpio91_default>;
 };
-
 &gpio0 {
 	status = "okay";
 };
@@ -856,3 +802,4 @@
 	npu-supply=<&npu_vcc1>;
 	status = "okay";
 };
+
