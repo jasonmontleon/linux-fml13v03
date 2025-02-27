@@ -412,9 +412,14 @@ void common_dmabuf_heap_release(struct heap_mem *heap_obj)
 {
 	struct heap_root *root = heap_obj->root;
 
-	mutex_lock(&root->lock);
-	kref_put(&heap_obj->refcount, __common_dmabuf_heap_release);
-	mutex_unlock(&root->lock);
+	if(!mutex_is_locked(&root->lock)) {
+		mutex_lock(&root->lock);
+		kref_put(&heap_obj->refcount, __common_dmabuf_heap_release);
+		mutex_unlock(&root->lock);
+	}
+	else {
+		kref_put(&heap_obj->refcount, __common_dmabuf_heap_release);
+	}
 }
 EXPORT_SYMBOL(common_dmabuf_heap_release);
 
@@ -583,9 +588,14 @@ void common_dmabuf_heap_rsv_iova_unmap(struct heap_mem *heap_obj)
 {
 	struct heap_root *root = heap_obj->root;
 
-	mutex_lock(&root->lock);
-	kref_put(&heap_obj->refcount, __common_dmabuf_heap_rsv_iova_unmap);
-	mutex_unlock(&root->lock);
+	if(!mutex_is_locked(&root->lock)) {
+		mutex_lock(&root->lock);
+		kref_put(&heap_obj->refcount, __common_dmabuf_heap_rsv_iova_unmap);
+		mutex_unlock(&root->lock);
+	}
+	else {
+		kref_put(&heap_obj->refcount, __common_dmabuf_heap_rsv_iova_unmap);
+	}
 }
 EXPORT_SYMBOL(common_dmabuf_heap_rsv_iova_unmap);
 
