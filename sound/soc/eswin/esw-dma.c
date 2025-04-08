@@ -26,8 +26,8 @@
 #include "esw-i2s.h"
 #include "esw-dai.h"
 
-#define MAX_PERIOD_SIZE 4096
-#define MIN_PERIOD_SIZE 512
+#define MAX_PERIOD_BYTES 4096
+#define MIN_PERIOD_BYTES 512
 #define MAX_PERIOD_CNT 4
 #define MIN_PERIOD_CNT 2
 
@@ -149,8 +149,8 @@ int esw_pcm_dma_open(struct snd_soc_component *component,
 			SNDRV_PCM_INFO_INTERLEAVED;
 	hw.periods_min = MIN_PERIOD_CNT;
 	hw.periods_max = MAX_PERIOD_CNT;
-	hw.period_bytes_min = MIN_PERIOD_SIZE;
-	hw.period_bytes_max = MAX_PERIOD_SIZE;
+	hw.period_bytes_min = MIN_PERIOD_BYTES;
+	hw.period_bytes_max = MAX_PERIOD_BYTES;
 	hw.buffer_bytes_max = hw.period_bytes_max * MAX_PERIOD_CNT;
 	hw.fifo_size = dma_data->fifo_size;
 	hw.info |= SNDRV_PCM_INFO_BATCH;
@@ -231,8 +231,8 @@ int esw_pcm_dma_hw_params(struct snd_soc_component *component,
 	struct dma_slave_config slave_config;
 	int ret;
 
-	dev_dbg(chip->dev, "%s, period size:%d, period cnt:%d\n", __func__,
-			 params_period_size(params), params_periods(params));
+	 dev_dbg(chip->dev, "%s, buffer_size: %d, period size:%d, period cnt:%d\n", __func__,
+		params_buffer_size(params), params_period_size(params), params_periods(params));
 
 	memset(&slave_config, 0, sizeof(slave_config));
 
@@ -487,4 +487,17 @@ release_chan0:
 		dma_release_channel(chip->chan[0]);
 
 	return ret;
+}
+
+void esw_pcm_dma_dai_unregister(struct i2s_dev *chip)
+{
+	snd_soc_unregister_component_by_driver(chip->dev, chip->pcm_component.driver);
+
+	if (chip->chan[1]) {
+		dma_release_channel(chip->chan[1]);
+	}
+
+	if (chip->chan[0]) {
+		dma_release_channel(chip->chan[0]);
+	}
 }
