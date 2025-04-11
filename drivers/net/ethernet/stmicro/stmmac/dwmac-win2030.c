@@ -84,13 +84,70 @@ struct dwc_qos_priv {
 	struct regmap *rgmii_sel;
 	struct gpio_desc *phy_reset;
 	struct stmmac_priv *stmpriv;
-	int phyled_cfgs[3];
 	int phyaddr;
+	int phyled_cfgs[3];
 	unsigned int dly_hsp_reg[3];
 	unsigned int dly_param_1000m[3];
 	unsigned int dly_param_100m[3];
 	unsigned int dly_param_10m[3];
 };
+
+void rtl8211f_wol_enable(struct phy_device *phydev)
+{
+	int value;
+	struct net_device * ndev = phydev->attached_dev;
+	printk("In %s \r\n", __func__);
+
+	//set INTB pin
+	phy_write(phydev, 31, 0x0d40);
+	value = phy_read(phydev, 22);
+	phy_write(phydev, 22, value | BIT(5));
+
+	//set MAC address
+	phy_write(phydev, 31, 0x0d8c);
+	phy_write(phydev, 16, ((u16)ndev->dev_addr[1] << 8) + ndev->dev_addr[0]);
+	phy_write(phydev, 17, ((u16)ndev->dev_addr[3] << 8) + ndev->dev_addr[2]);
+	phy_write(phydev, 18, ((u16)ndev->dev_addr[5] << 8) + ndev->dev_addr[4]);
+
+	//set max packet length
+	phy_write(phydev, 31, 0x0d8a);
+	phy_write(phydev, 17, 0x9fff);
+
+	//enable wol event
+	phy_write(phydev, 31, 0x0d8a);
+	phy_write(phydev, 16, 0x1000);
+
+	//disable rgmii pad
+	phy_write(phydev, 31, 0x0d8a);
+	value = phy_read(phydev, 19);
+	phy_write(phydev, 19, value | BIT(15));
+	phy_write(phydev, 31, 0xa42);
+}
+
+void rtl8211f_wol_disable(struct phy_device *phydev)
+{
+	int value;
+	printk("In %s \r\n", __func__);
+	//disable wol event
+	phy_write(phydev, 31, 0x0d8a);
+	phy_write(phydev, 16, 0x0);
+
+	//reset wol
+	phy_write(phydev, 31, 0x0d8a);
+	value = phy_read(phydev, 17);
+	phy_write(phydev, 17, value & (~BIT(15)));
+
+	//enable rgmii pad
+	phy_write(phydev, 31, 0x0d8a);
+	value = phy_read(phydev, 19);
+	phy_write(phydev, 19, value & (~BIT(15)));
+
+	//set INTB pin
+	phy_write(phydev, 31, 0x0d40);
+	value = phy_read(phydev, 22);
+	phy_write(phydev, 22, value & (~BIT(5)));
+	phy_write(phydev, 31, 0xa42);
+}
 
 static int dwc_eth_dwmac_config_dt(struct platform_device *pdev,
 				   struct plat_stmmacenet_data *plat_dat)
@@ -169,7 +226,7 @@ static int dwc_eth_dwmac_config_dt(struct platform_device *pdev,
 	plat_dat->has_gmac4 = 1;
 	plat_dat->dma_cfg->aal = 1;
     plat_dat->flags |= STMMAC_FLAG_TSO_EN;
-	plat_dat->pmt = 1;
+	plat_dat->pmt = 0;
 
 	return 0;
 }
@@ -281,6 +338,8 @@ static void dwc_qos_fix_speed(void *priv, unsigned int speed, unsigned int mode)
 	{
 		dev_err(dwc_priv->dev, "failed to set TX rate: %d\n", err);
 	}
+	if (dwc_priv->stmpriv->dev->phydev->phy_id == 0x001cc916)
+		rtl8211f_wol_disable(dwc_priv->stmpriv->dev->phydev);
 }
 
 static int dwc_clks_config(void *priv, bool enabled)
@@ -333,6 +392,15 @@ static int dwc_clks_config(void *priv, bool enabled)
 	}
 
 	return ret;
+}
+
+static void dwc_eth_dwmac_shutdown(struct platform_device *pdev)
+{
+	struct net_device *ndev = platform_get_drvdata(pdev);
+
+	if (ndev->phydev->phy_id == 0x001cc916)
+		rtl8211f_wol_enable(ndev->phydev);
+	return;
 }
 
 static int dwc_qos_probe(struct platform_device *pdev,
@@ -622,7 +690,7 @@ static int dwc_eth_dwmac_probe(struct platform_device *pdev)
 
 	ndev = dev_get_drvdata(&pdev->dev);
 	stmpriv = netdev_priv(ndev);
-	
+
 	dwc_priv->stmpriv = stmpriv;
 
 	return ret;
@@ -664,9 +732,10 @@ MODULE_DEVICE_TABLE(of, dwc_eth_dwmac_match);
 static struct platform_driver win2030_eth_dwmac_driver = {
 	.probe  = dwc_eth_dwmac_probe,
 	.remove = dwc_eth_dwmac_remove,
+	.shutdown = dwc_eth_dwmac_shutdown,
 	.driver = {
 		.name           = "win2030-eth-dwmac",
-		.pm             = &stmmac_pltfr_pm_ops,
+		.pm             = pm_sleep_ptr(&stmmac_pltfr_pm_ops),
 		.of_match_table = dwc_eth_dwmac_match,
 	},
 };
