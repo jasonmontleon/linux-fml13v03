@@ -32,7 +32,7 @@
 #include "eic7700-pinctrl.dtsi"
 #include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/gpio/gpio.h>
-#include "eic7700-d314-camera.dtsi"
+//#include "eic7700-d314-camera.dtsi"
 
 /* Clock frequency (in Hz) of the PCB crystal for rtcclk */
 
@@ -40,7 +40,7 @@
 	#address-cells = <2>;
 	#size-cells = <2>;
 	model = "ESWIN 7700S314";
-	compatible = "eswin,eic7700";
+	compatible = "eswin,eic7x";
 
 	aliases {
 		serial0 = &d0_uart0;
@@ -91,9 +91,14 @@
 			reg = <0x0 0x59000000 0x0 0x400000>;
 		};
 
-		g2d_4GB_boundary_reserved_4k {
+		ramoops@fff00000 {
+			compatible = "ramoops";
+			reg = <0x0 0xfff00000 0x0 0x100000>;
+			console-size = <0x40000>;
+			record-size = <0x40000>;
+			ftrace-size = <0x40000>;
+			pmsg-size = <0x40000>;
 			no-map;
-			reg = <0x0 0xfffff000 0x0 0x1000>;
 		};
 
 		g2d_8GB_boundary_reserved_4k {
@@ -111,17 +116,7 @@
 			reg = <0x3 0x0 0x1 0x80000000>;
 			no-map;
 		};
-
-		dvp2axi_mem: dvp2axi-mem@90000000 {
-			compatible = "shared-dma-pool";
-			reg = <0x0 0x90000000 0x0 0x10000000>;
-			no-map;
-		};
 	};
-};
-
-&d0_clock {
-	status = "okay";
 };
 
 &d0_reset {
@@ -381,36 +376,20 @@
 	dais = <&d0_i2s0_port>;
 };
 
-&isp_0 {
+&vi_subsys {
 	status = "okay";
 };
 
+&isp_0 {
+	status = "disabled";
+};
+
 &isp_1 {
-	status = "okay";
+	status = "disabled";
 };
 
 &dewarp {
 	status = "okay";
-};
-
-&mipi_dphy_rx {
-	status = "disabled";
-};
-
-&csi_dma0 {
-	status = "disabled";
-};
-
-&csi_dma1 {
-	status = "disabled";
-};
-
-&csi2_0 {
-	status = "disabled";
-};
-
-&csi2_1 {
-	status = "disabled";
 };
 
 &sdhci_emmc {
@@ -441,6 +420,7 @@
 	rst-gpios = <&portd 10 GPIO_ACTIVE_LOW>;
 	eswin,rgmiisel = <&pinctrl 0x290 0x3>;
 	eswin,led-cfgs = <0x6100 0xa40 0x420>;
+	phy-mode = "rgmii-txid";
 	dly-param-1000m = <0x20202020 0xA0205A20 0x20202020>;
 	dly-param-100m = <0x20202020 0x96205A20 0x20202020>;
 	dly-param-10m = <0 0 0>;
@@ -453,6 +433,7 @@
 	rst-gpios = <&portd 15 GPIO_ACTIVE_LOW>;
 	eswin,rgmiisel = <&pinctrl 0x294 0x3>;
 	eswin,led-cfgs = <0x6100 0xa40 0x420>;
+	phy-mode = "rgmii-txid";
 	dly-param-1000m = <0x20202020 0x46204620 0x20202020>;
 	dly-param-100m = <0x20202020 0x50205020 0x20202020>;
 	dly-param-10m = <0 0 0>;
@@ -464,6 +445,7 @@
 
 &d0_usbdrd3_0 {
 	status = "okay";
+	rt_equalization;
 };
 
 &d0_usbdrd_dwc3_0 {
@@ -474,6 +456,7 @@
 
 &d0_usbdrd3_1 {
 	status = "okay";
+	rt_equalization;
 };
 
 &d0_usbdrd_dwc3_1 {
@@ -523,8 +506,6 @@
 	/* spi flash */
 	status = "okay";
 	num-cs = <1>;
-	cs-gpios = <&portd 0 GPIO_ACTIVE_LOW>;
-	wp-gpios = <&portd 4 GPIO_ACTIVE_LOW>;
 	spi-flash@0 {
 		compatible = "winbond,w25q128jw",
 					"jedec,spi-nor";
@@ -627,7 +608,7 @@
 	pinctrl-names = "default", "sleep";
 	pinctrl-0 = <&pinctrl_pwm0_default>;
 	pinctrl-1 = <&pinctrl_gpio68_default>;
-	enable-gpios = <&portc 4 GPIO_ACTIVE_HIGH>;
+	fan-pwm-gpios = <&portc 4 GPIO_ACTIVE_HIGH>;
 };
 
 &pvt0 {
@@ -658,22 +639,6 @@
 	status = "okay";
 };
 
-&timer0 {
-	status = "okay";
-};
-
-&timer1 {
-	status = "okay";
-};
-
-&timer2 {
-	status = "okay";
-};
-
-&timer3 {
-	status = "okay";
-};
-
 &pinctrl {
 	status = "okay";
 };
@@ -700,32 +665,8 @@
 
 &d0_clock {
 	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_gpio94_default>;
 	cpu-voltage-gpios = <&portc 30 GPIO_ACTIVE_HIGH>;
 };
 
-&d0_cpu_opp_table {
-	opp-1500000000 {
-		opp-hz = /bits/ 64 <CLK_FREQ_1500M>;
-		opp-microvolt = <900000>;
-		clock-latency-ns = <70000>;
-	};
-	opp-1600000000 {
-		opp-hz = /bits/ 64 <CLK_FREQ_1600M>;
-		opp-microvolt = <900000>;
-		clock-latency-ns = <70000>;
-	};
-	opp-1700000000 {
-		opp-hz = /bits/ 64 <CLK_FREQ_1700M>;
-		opp-microvolt = <900000>;
-		clock-latency-ns = <70000>;
-	};
-	opp-1800000000 {
-		opp-hz = /bits/ 64 <CLK_FREQ_1800M>;
-		opp-microvolt = <900000>;
-		clock-latency-ns = <70000>;
-	};
-};
-
-&dvp2axi {
-	memory-region = <&dvp2axi_mem>;
-};

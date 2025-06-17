@@ -41,8 +41,7 @@
 	#address-cells = <2>;
 	#size-cells = <2>;
 	model = "ESWIN 7700S260";
-	compatible = "sifive,hifive-unmatched-a00", "sifive,fu740-c000",
-		     "sifive,fu740", "eswin,eic7700";
+	compatible = "eswin,eic7x";
 
 	aliases {
 		serial0 = &d0_uart0;
@@ -93,9 +92,14 @@
 			reg = <0x0 0x59000000 0x0 0x400000>;
 		};
 
-		g2d_4GB_boundary_reserved_4k {
+		ramoops@fff00000 {
+			compatible = "ramoops";
+			reg = <0x0 0xfff00000 0x0 0x100000>;
+			console-size = <0x40000>;
+			record-size = <0x40000>;
+			ftrace-size = <0x40000>;
+			pmsg-size = <0x40000>;
 			no-map;
-			reg = <0x0 0xfffff000 0x0 0x1000>;
 		};
 
 		g2d_8GB_boundary_reserved_4k {
@@ -144,29 +148,6 @@
 		d0_gmac0
 		d0_gmac1
 ****************************************************/
-
-&d0_cpu_opp_table {
-	opp-1500000000 {
-		opp-hz = /bits/ 64 <CLK_FREQ_1500M>;
-		opp-microvolt = <900000>;
-		clock-latency-ns = <70000>;
-	};
-	opp-1600000000 {
-		opp-hz = /bits/ 64 <CLK_FREQ_1600M>;
-		opp-microvolt = <900000>;
-		clock-latency-ns = <70000>;
-	};
-	opp-1700000000 {
-		opp-hz = /bits/ 64 <CLK_FREQ_1700M>;
-		opp-microvolt = <900000>;
-		clock-latency-ns = <70000>;
-	};
-	opp-1800000000 {
-		opp-hz = /bits/ 64 <CLK_FREQ_1800M>;
-		opp-microvolt = <900000>;
-		clock-latency-ns = <70000>;
-	};
-};
 
 &d0_clock {
 	status = "okay";
@@ -336,25 +317,6 @@
 	status = "okay";
 };
 
-&video_output {
-	status = "okay";
-};
-
-&dc {
-	status = "okay";
-	dc_out: port {
-		#address-cells = <1>;
-		#size-cells = <0>;
-		dc_out_dpi: endpoint@0 {
-			reg = <0>;
-			remote-endpoint = <&vd_input>;
-		};
-		dc_out_hdmi: endpoint@1 {
-			reg = <1>;
-			remote-endpoint = <&hdmi_in_dc>;
-		};
-	};
-};
 
 &dc_test {
 	status = "disabled";
@@ -377,39 +339,8 @@
 	status = "okay";
 };
 
-&dw_hdmi {
-	status = "okay";
-	ports {
-		#address-cells = <1>;
-		#size-cells = <0>;
-		port@0 {
-			reg = <0>;
-			hdmi_in_dc: endpoint@0 {
-				remote-endpoint = <&dc_out_hdmi>;
-			};
-		};
-		port@2 {
-			reg = <2>;
-			hdmi_in_i2s: endpoint@1 {
-				system-clock-frequency = <12288000>;
-				remote-endpoint = <&d0_i2s0_endpoint>;
-			};
-		};
-	};
-};
-
 &dw_hdmi_hdcp2 {
     status = "okay";
-};
-
-&d0_i2s0 {
-	status = "okay";
-	d0_i2s0_port: port {
-		d0_i2s0_endpoint: endpoint {
-			remote-endpoint = <&hdmi_in_i2s>;
-			dai-format = "i2s";
-		};
-	};
 };
 
 &d0_graphcard0 {
@@ -418,36 +349,20 @@
 	dais = <&d0_i2s0_port>;
 };
 
-&isp_0 {
+&vi_subsys {
 	status = "okay";
 };
 
+&isp_0 {
+	status = "disabled";
+};
+
 &isp_1 {
-	status = "okay";
+	status = "disabled";
 };
 
 &dewarp {
 	status = "okay";
-};
-
-&mipi_dphy_rx {
-	status = "okay";
-};
-
-&csi_dma0 {
-	status = "okay";
-};
-
-&csi_dma1 {
-	status = "disabled";
-};
-
-&csi2_0 {
-	status = "okay";
-};
-
-&csi2_1 {
-	status = "disabled";
 };
 
 &sdhci_emmc {
@@ -493,6 +408,7 @@
 
 &d0_usbdrd3_0 {
 	status = "okay";
+	rt_equalization;
 };
 
 &d0_usbdrd_dwc3_0 {
@@ -503,6 +419,7 @@
 
 &d0_usbdrd3_1 {
 	status = "okay";
+	rt_equalization;
 };
 
 &d0_usbdrd_dwc3_1 {
@@ -553,8 +470,6 @@
 	/* spi flash */
 	status = "okay";
 	num-cs = <1>;
-	cs-gpios = <&portd 0 GPIO_ACTIVE_LOW>;
-	wp-gpios = <&portd 4 GPIO_ACTIVE_LOW>;
 	spi-flash@0 {
 		compatible = "winbond,w25q128jw",
 					"jedec,spi-nor";
@@ -667,7 +582,7 @@
 		compatible = "einno,es5340";
 		reg = <0xf>;
 		eswin,regulator_default-microvolt=<1000000>;
-		eswin,regulator_label = "supply vdd1", "npu vdd1", "npu current1", "npu temperature1";
+		eswin,regulator_label = "Supply VDD", "NPU Voltage", "NPU CURRENT", "NPU Temperature";
 		label = "npu_vdd";
 		regulators{
 			npu_vcc1:npu_svcc{
@@ -688,7 +603,7 @@
 	pinctrl-names = "default", "sleep";
 	pinctrl-0 = <&pinctrl_pwm0_default>;
 	pinctrl-1 = <&pinctrl_gpio68_default>;
-	enable-gpios = <&portc 4 GPIO_ACTIVE_HIGH>;
+	fan-pwm-gpios = <&portc 4 GPIO_ACTIVE_LOW>;
 };
 
 &pvt0 {
@@ -719,22 +634,6 @@
 	status = "okay";
 };
 
-&timer0 {
-	status = "okay";
-};
-
-&timer1 {
-	status = "okay";
-};
-
-&timer2 {
-	status = "okay";
-};
-
-&timer3 {
-	status = "okay";
-};
-
 &pinctrl {
 	status = "okay";
 };
@@ -746,4 +645,11 @@
 	/* apply_npu_1G_freq; */
 	npu-supply=<&npu_vcc1>;
 	status = "okay";
+};
+
+&SOC {
+       rasp_panel: rasp_panel {
+             compatible = "raspberrypi,7inch-dsi";
+	     status = "disabled";
+       };
 };

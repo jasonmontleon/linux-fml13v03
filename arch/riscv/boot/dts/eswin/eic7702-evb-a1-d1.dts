@@ -40,8 +40,7 @@
 	#address-cells = <2>;
 	#size-cells = <2>;
 	model = "ESWIN EIC7700";
-	compatible = "sifive,hifive-unmatched-a00", "sifive,fu740-c000",
-		     "sifive,fu740", "eswin,eic7700";
+	compatible = "eswin,eic7x";
 
 	aliases {
 		serial0 = &d0_uart0;
@@ -89,9 +88,14 @@
 			reg = <0x0 0x59000000 0x0 0x400000>;
 		};
 
-		g2d_4GB_boundary_reserved_4k {
+		ramoops@fff00000 {
+			compatible = "ramoops";
+			reg = <0x0 0xfff00000 0x0 0x100000>;
+			console-size = <0x40000>;
+			record-size = <0x40000>;
+			ftrace-size = <0x40000>;
+			pmsg-size = <0x40000>;
 			no-map;
-			reg = <0x0 0xfffff000 0x0 0x1000>;
 		};
 
 		g2d_8GB_boundary_reserved_4k {
@@ -289,10 +293,6 @@
 	dc_out: port {
 		#address-cells = <1>;
 		#size-cells = <0>;
-		dc_out_dsi: endpoint@0 {
-			reg = <0>;
-			remote-endpoint = <&dsi_input>;
-		};
 		dc_out_dpi1: endpoint@1 {
 			reg = <1>;
 			remote-endpoint = <&vd_input>;
@@ -321,49 +321,6 @@
     status = "okay";
 };
 
-&dsi_controller {
-    status = "okay";
-	ports {
-		#address-cells = <1>;
-		#size-cells = <0>;
-		port@0 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <0>;
-			dsi_input: endpoint {
-				remote-endpoint = <&dc_out_dsi>;
-			};
-		};
-		port@1 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <1>;
-			mipi_dsi_out: endpoint {
-				remote-endpoint = <&panel_in>;
-			};
-		};
-	};
-
-	dsi_panel:dsi_panel@0 {
-		compatible = "eswin,generic-panel";
-		reg = <0>;
-		dsi,format = <0>; //RGB888:0, RGB666:1, RGB565:3
-		dsi,lanes = <4>;
-		port {
-			panel_in: endpoint {
-				remote-endpoint = <&mipi_dsi_out>;
-			};
-		};
-	};
-};
-
-&dsi_panel {
-	status = "okay";
-	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_gpio69_default &pinctrl_gpio21_default>;
-	backlight0-gpios = <&portc 5 GPIO_ACTIVE_HIGH>;
-	rst-gpios = <&porta 21 GPIO_ACTIVE_HIGH>;
-};
 
 &dw_hdmi {
 	status = "okay";
@@ -438,36 +395,20 @@
 	dais = <&d0_i2s0_port>;
 };
 
-&isp_0 {
+&vi_subsys {
 	status = "okay";
 };
 
+&isp_0 {
+	status = "disabled";
+};
+
 &isp_1 {
-	status = "okay";
+	status = "disabled";
 };
 
 &dewarp {
 	status = "okay";
-};
-
-&mipi_dphy_rx {
-	status = "okay";
-};
-
-&csi_dma0 {
-	status = "okay";
-};
-
-&csi_dma1 {
-	status = "disabled";
-};
-
-&csi2_0 {
-	status = "okay";
-};
-
-&csi2_1 {
-	status = "disabled";
 };
 
 &sdhci_emmc {
@@ -505,6 +446,7 @@
 	rst-gpios = <&porta 13 GPIO_ACTIVE_LOW>;
 	eswin,rgmiisel = <&pinctrl 0x290 0x3>;
 	eswin,led-cfgs = <0x6100 0xa40 0x420>;
+	phy-mode = "rgmii-txid";
 	dly-param-1000m = <0x23232323 0x5a0c6423 0x0c0c0c0c>;
 	dly-param-100m = <0x50505050 0x803f8050 0x3f3f3f3f>;
 	dly-param-10m = <0 0 0>;
@@ -517,6 +459,7 @@
 	rst-gpios = <&porta 14 GPIO_ACTIVE_LOW>;
 	eswin,rgmiisel = <&pinctrl 0x294 0x3>;
 	eswin,led-cfgs = <0x6100 0xa40 0x420>;
+	phy-mode = "rgmii-txid";
 	dly-param-1000m = <0x25252525 0x5a266425 0x26262626>;
 	dly-param-100m = <0x48484848 0x80588048 0x58585858>;
 	dly-param-10m = <0 0 0>;
@@ -529,6 +472,7 @@
 
 &d0_usbdrd3_0 {
 	status = "okay";
+	rt_equalization;
 };
 
 &d0_usbdrd_dwc3_0 {
@@ -539,6 +483,7 @@
 
 &d0_usbdrd3_1 {
 	status = "okay";
+	rt_equalization;
 };
 
 &d0_usbdrd_dwc3_1 {
@@ -613,8 +558,6 @@
 	/* spi flash */
 	status = "okay";
 	num-cs = <1>;
-	cs-gpios = <&portd 0 GPIO_ACTIVE_LOW>;
-	wp-gpios = <&portd 4 GPIO_ACTIVE_LOW>;
 	spi-flash@0 {
 		compatible = "winbond,w25q128jw",
 					"jedec,spi-nor";
@@ -695,7 +638,7 @@
 		compatible = "einno,es5340";
 		reg = <0xf>;
 		eswin,regulator_default-microvolt=<1000000>;
-		eswin,regulator_label = "supply vdd1", "npu vdd1", "npu current1", "npu temperature1";
+		eswin,regulator_label = "Supply VDD", "NPU Voltage", "NPU CURRENT", "NPU Temperature";
 		label = "npu_vdd";
 		regulators{
 			npu_vcc1:npu_svcc{
@@ -795,7 +738,7 @@
 	pinctrl-names = "default", "sleep";
 	pinctrl-0 = <&pinctrl_pwm0_default>;
 	pinctrl-1 = <&pinctrl_gpio68_default>;
-	enable-gpios = <&portc 4 GPIO_ACTIVE_LOW>;
+	fan-pwm-gpios = <&portc 4 GPIO_ACTIVE_LOW>;
 };
 
 &pvt0 {
@@ -824,22 +767,6 @@
 
 &die0_rtc {
 	status = "okay";
-};
-
-&timer0 {
-	status = "disabled";
-};
-
-&timer1 {
-	status = "disabled";
-};
-
-&timer2 {
-	status = "disabled";
-};
-
-&timer3 {
-	status = "disabled";
 };
 
 &pinctrl {

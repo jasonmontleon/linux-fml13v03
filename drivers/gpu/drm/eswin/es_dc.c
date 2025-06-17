@@ -32,6 +32,7 @@
 #include <drm/drm_fourcc.h>
 #include <drm/drm_blend.h>
 
+#include "es_dc_gamma.h"
 #include "es_drm.h"
 #include "es_type.h"
 #include "es_dc_hw.h"
@@ -325,6 +326,29 @@ static int dc_init(struct device *dev)
 	return 0;
 }
 
+static void vo_qos_cfg(int die_id)
+{
+	void __iomem *qos;
+	uint32_t vo_pos;
+
+	if (die_id == 0)
+		vo_pos = 0x50281050;
+	else
+		vo_pos = 0x70281050;
+
+	qos = ioremap(vo_pos, 8);
+	if (!qos) {
+		printk("qos ioremap fail---------------\n");
+		return;
+	}
+	writel(0x9, qos);
+	writel(0x9, (char *)qos + 4);
+
+	iounmap(qos);
+	return;
+}
+
+
 static void es_dc_dump_enable(struct device *dev, dma_addr_t addr,
 			      unsigned int pitch)
 {
@@ -345,6 +369,7 @@ static int es_dc_suspend(struct device *dev, struct drm_device *drm_dev)
 	struct es_dc *dc = dev_get_drvdata(dev);
 	int ret = 0;
 
+	dev_dbg(dev, "%s\n", __func__);
 	disable_irq(dc->irq);
 
 	dc_deinit(dev);
@@ -360,10 +385,10 @@ static int es_dc_resume(struct device *dev, struct drm_device *drm_dev)
 {
 	struct es_dc *dc = dev_get_drvdata(dev);
 	int ret = 0;
-#ifdef CONFIG_ESWIN_MMU
+	int die_id;
 	struct es_drm_private *priv = drm_dev->dev_private;
-#endif
 
+	dev_dbg(dev, "%s\n", __func__);
 	es_dc_clk_configs(dev, true);
 	ret = dc_init(dev);
 	if (ret < 0) {
@@ -371,18 +396,24 @@ static int es_dc_resume(struct device *dev, struct drm_device *drm_dev)
 		return ret;
 	}
 
-#ifdef CONFIG_ESWIN_MMU
 	ret = dc_hw_mmu_init(&dc->hw, priv->mmu);
 	if (ret < 0) {
 		dev_err(dev, "Failed to dc_hw_mmu_init\n");
 	}
-#endif
 
 	ret = es_drm_iommu_attach_device(drm_dev, dev);
 	if (ret < 0) {
 		dev_err(dev, "Failed to attached iommu device.\n");
 	}
 	enable_irq(dc->irq);
+
+	ret = of_property_read_u32(dev->of_node, "numa-node-id", &die_id);
+	if (ret) {
+		DRM_DEV_ERROR(dev, "Failed to read index property, ret = %d\n",
+			      ret);
+		return ret;
+	}
+	vo_qos_cfg(die_id);
 
 	return 0;
 }
@@ -447,12 +478,12 @@ static void es_dc_enable(struct device *dev, struct drm_crtc *crtc)
 	else
 		dc_hw_set_out(&dc->hw, OUT_DP);
 
-#ifdef CONFIG_ESWIN_MMU
+
 	if (crtc_state->mmu_prefetch == ES_MMU_PREFETCH_ENABLE)
 		dc_hw_enable_mmu_prefetch(&dc->hw, true);
 	else
 		dc_hw_enable_mmu_prefetch(&dc->hw, false);
-#endif
+
 
 	dc_hw_setup_display(&dc->hw, &display);
 	cursor.enable = false;
@@ -491,12 +522,84 @@ static bool es_dc_mode_fixup(struct device *dev,
 	return true;
 }
 
+u16 find_gamma_lut(int ave_gamma, u16 index)
+{
+	if (ave_gamma>=GMA_1_O_MIN && ave_gamma < GMA_1_1_MIN)
+		return GAM_1_0[index];
+	else if (ave_gamma >= GMA_1_1_MIN && ave_gamma < GMA_1_2_MIN)
+		return GAM_1_1[index];
+	else if (ave_gamma >= GMA_1_2_MIN && ave_gamma < GMA_1_3_MIN)
+		return GAM_1_2[index];
+	else if (ave_gamma >= GMA_1_3_MIN && ave_gamma < GMA_1_4_MIN)
+		return GAM_1_3[index];
+	else if (ave_gamma >= GMA_1_4_MIN && ave_gamma < GMA_1_5_MIN)
+		return GAM_1_4[index];
+	else if (ave_gamma >= GMA_1_5_MIN && ave_gamma < GMA_1_6_MIN)
+		return GAM_1_5[index];
+	else if (ave_gamma >= GMA_1_6_MIN && ave_gamma < GMA_1_7_MIN)
+		return GAM_1_6[index];
+	else if (ave_gamma >= GMA_1_7_MIN && ave_gamma < GMA_1_8_MIN)
+		return GAM_1_7[index];
+	else if (ave_gamma >= GMA_1_8_MIN && ave_gamma < GMA_1_9_MIN)
+		return GAM_1_8[index];
+	else if (ave_gamma >= GMA_1_9_MIN && ave_gamma < GMA_2_0_MIN)
+		return GAM_1_9[index];
+	else if (ave_gamma >= GMA_2_0_MIN && ave_gamma < GMA_2_1_MIN)
+		return GAM_2_0[index];
+	else if (ave_gamma >= GMA_2_1_MIN && ave_gamma < GMA_2_2_MIN)
+		return GAM_2_1[index];
+	else if (ave_gamma >= GMA_2_2_MIN && ave_gamma < GMA_2_3_MIN)
+		return GAM_2_2[index];
+	else if (ave_gamma >= GMA_2_3_MIN && ave_gamma < GMA_2_4_MIN)
+		return GAM_2_3[index];
+	else if (ave_gamma >= GMA_2_4_MIN && ave_gamma < GMA_2_5_MIN)
+		return GAM_2_4[index];
+	else if (ave_gamma >= GMA_2_5_MIN && ave_gamma < GMA_2_5_MAX)
+		return GAM_2_5[index];
+	else
+		return GAM_1_0[index];
+}
+
+int find_min_in_array(const int *array, size_t size)
+{
+	int min_index=0, min_value = array[0], i = 1;
+	if (!array || size == 0) {
+		printk("Invalid array or size\n");
+		return INT_MAX; // Return the maximum possible value for int
+	}
+
+	for (i = 1; i < size; i++) {
+		if (array[i] < min_value) {
+			min_value = array[i];
+			min_index = i;
+		}
+	}
+
+	return min_index;
+}
+
+u32 eswin_log2(u32 x) {
+	u32 tem = x, i=0, result = 0;
+	u32 del[CAL_GAM_NUM];
+	int min_index =0;
+
+	while (x >>= 1)
+		result++;
+	for (i=0; i< CAL_GAM_NUM; i++)
+		del[i] = abs(tem- (1<<result)*CAL_GAM[i]/1000);
+	min_index = find_min_in_array(del, CAL_GAM_NUM);
+
+	return (min_index*COFF_1_16/10 + result*1000);
+}
+
 static void es_dc_set_gamma(struct device *dev, struct drm_color_lut *lut,
 			    unsigned int size)
 {
 	struct es_dc *dc = dev_get_drvdata(dev);
 	u16 i, r, g, b;
 	u8 bits;
+	int ave_gamma_r = 0, ave_gamma_g = 0, ave_gamma_b = 0;
+	int gamma_r[COFF_LOG_NUM], gamma_g[COFF_LOG_NUM], gamma_b[COFF_LOG_NUM];
 
 	if (size != dc->hw.info->gamma_size) {
 		dev_err(dev, "gamma size does not match!\n");
@@ -504,11 +607,36 @@ static void es_dc_set_gamma(struct device *dev, struct drm_color_lut *lut,
 	}
 
 	bits = dc->hw.info->gamma_bits;
-	for (i = 0; i < size; i++) {
-		r = drm_color_lut_extract(lut[i].red, bits);
-		g = drm_color_lut_extract(lut[i].green, bits);
-		b = drm_color_lut_extract(lut[i].blue, bits);
-		dc_hw_update_gamma(&dc->hw, i, r, g, b);
+	if (size == GAMMA_EX_SIZE) {
+		for (i = GAMMA_EX_SIZE/2-COFF_LOG_NUM/2; i< GAMMA_EX_SIZE/2+COFF_LOG_NUM/2; i++) {
+			r = drm_color_lut_extract(lut[i].red, bits);
+			gamma_r[i-(GAMMA_EX_SIZE/2-COFF_LOG_NUM/2)] =
+				(LOG_4095_2-eswin_log2((u32)r))*NUMERATOR_COFF_LOG/COFF_LOG[i-(GAMMA_EX_SIZE/2-COFF_LOG_NUM/2)];
+			ave_gamma_r = ave_gamma_r + gamma_r[i-(GAMMA_EX_SIZE/2-COFF_LOG_NUM/2)];
+
+			g = drm_color_lut_extract(lut[i].green, bits);
+			gamma_g[i-(GAMMA_EX_SIZE/2-COFF_LOG_NUM/2)] =
+				(LOG_4095_2-eswin_log2((u32)g))*NUMERATOR_COFF_LOG/COFF_LOG[i-(GAMMA_EX_SIZE/2-COFF_LOG_NUM/2)];
+			ave_gamma_g = ave_gamma_g + gamma_g[i-(GAMMA_EX_SIZE/2-COFF_LOG_NUM/2)];
+
+			b = drm_color_lut_extract(lut[i].blue, bits);
+			gamma_b[i-(GAMMA_EX_SIZE/2-COFF_LOG_NUM/2)] =
+				(LOG_4095_2-eswin_log2((u32)b))*NUMERATOR_COFF_LOG/COFF_LOG[i-(GAMMA_EX_SIZE/2-COFF_LOG_NUM/2)];
+			ave_gamma_b = ave_gamma_b + gamma_b[i-(GAMMA_EX_SIZE/2-COFF_LOG_NUM/2)];
+		}
+		ave_gamma_r = ave_gamma_r/COFF_LOG_NUM;
+		ave_gamma_g = ave_gamma_g/COFF_LOG_NUM;
+		ave_gamma_b = ave_gamma_b/COFF_LOG_NUM;
+		for (i=0; i<size; i++)
+			dc_hw_update_gamma(&dc->hw, i, find_gamma_lut(ave_gamma_r, i),
+				find_gamma_lut(ave_gamma_g, i), find_gamma_lut(ave_gamma_b, i));
+	} else {
+		for (i = 0; i < size; i++) {
+			r = drm_color_lut_extract(lut[i].red, bits);
+			g = drm_color_lut_extract(lut[i].green, bits);
+			b = drm_color_lut_extract(lut[i].blue, bits);
+			dc_hw_update_gamma(&dc->hw, i, r, g, b);
+		}
 	}
 }
 
@@ -890,9 +1018,7 @@ static void es_dc_commit(struct device *dev)
 {
 	struct es_dc *dc = dev_get_drvdata(dev);
 
-#ifdef CONFIG_ESWIN_MMU
 	dc_mmu_flush(&dc->hw);
-#endif
 
 	if (!dc->first_frame) {
 		if (dc_hw_flip_in_progress(&dc->hw))
@@ -938,10 +1064,7 @@ static const struct es_dc_funcs dc_funcs = {
 static int dc_bind(struct device *dev, struct device *master, void *data)
 {
 	struct drm_device *drm_dev = data;
-	struct platform_device *pdev = to_platform_device(dev);
-#ifdef CONFIG_ESWIN_MMU
 	struct es_drm_private *priv = drm_dev->dev_private;
-#endif
 	struct es_dc *dc = dev_get_drvdata(dev);
 	struct device_node *port;
 	struct es_crtc *crtc;
@@ -961,18 +1084,6 @@ static int dc_bind(struct device *dev, struct device *master, void *data)
 		dev_err(dev, "Failed to initialize DC hardware.\n");
 		return ret;
 	}
-
-	if (!dc->irq) {
-		dc->irq = platform_get_irq(pdev, 0);
-		ret = devm_request_irq(dev, dc->irq, dc_isr, 0, dev_name(dev),
-				       dc);
-		if (ret < 0) {
-			dev_err(dev, "Failed to install irq:%u.\n", dc->irq);
-			return ret;
-		}
-	}
-
-#ifdef CONFIG_ESWIN_MMU
 	if (priv->mmu_constructed == false) {
 		ret = dc_mmu_construct(priv->dma_dev, &priv->mmu);
 		if (ret) {
@@ -987,7 +1098,6 @@ static int dc_bind(struct device *dev, struct device *master, void *data)
 		dev_err(dev, "failed to init DC MMU\n");
 		goto err_clean_dc;
 	}
-#endif
 
 	ret = es_drm_iommu_attach_device(drm_dev, dev);
 	if (ret < 0) {
@@ -1079,23 +1189,6 @@ const struct component_ops dc_component_ops = {
 	.unbind = dc_unbind,
 };
 
-static void vo_qos_cfg(void)
-{
-	void __iomem *qos;
-
-#define VO_QOS_CSR 0x50281050UL
-	qos = ioremap(VO_QOS_CSR, 8);
-	if (!qos) {
-		printk("qos ioremap fail---------------\n");
-		return;
-	}
-	writel(0x9, qos);
-	writel(0x9, (char *)qos + 4);
-
-	iounmap(qos);
-	return;
-}
-
 static const struct of_device_id dc_driver_dt_match[] = {
 	{
 		.compatible = "eswin,dc",
@@ -1108,7 +1201,7 @@ static int dc_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct es_dc *dc;
-	int ret;
+	int ret, die_id;
 
 	dc = devm_kzalloc(dev, sizeof(*dc), GFP_KERNEL);
 	if (!dc)
@@ -1118,15 +1211,20 @@ static int dc_probe(struct platform_device *pdev)
 	if (IS_ERR(dc->hw.hi_base))
 		return PTR_ERR(dc->hw.hi_base);
 
-#ifdef CONFIG_ESWIN_MMU
 	dc->hw.mmu_base = devm_platform_ioremap_resource(pdev, 1);
 	if (IS_ERR(dc->hw.mmu_base))
 		return PTR_ERR(dc->hw.mmu_base);
-#endif
 
 	dc->hw.reg_base = devm_platform_ioremap_resource(pdev, 2);
 	if (IS_ERR(dc->hw.reg_base))
 		return PTR_ERR(dc->hw.reg_base);
+	
+	dc->irq = platform_get_irq(pdev, 0);
+	ret = devm_request_irq(dev, dc->irq, dc_isr, 0, dev_name(dev), dc);
+	if (ret < 0) {
+		dev_err(dev, "Failed to install irq:%u.\n", dc->irq);
+		return ret;
+	}
 
 	dc->vo_mux = devm_clk_get(dev, "vo_mux");
 	if (IS_ERR(dc->vo_mux)) {
@@ -1223,9 +1321,13 @@ static int dc_probe(struct platform_device *pdev)
 	}
 
 	dev_set_drvdata(dev, dc);
-
-	vo_qos_cfg();
-
+	ret = of_property_read_u32(dev->of_node, "numa-node-id", &die_id);
+	if (ret) {
+		DRM_DEV_ERROR(dev, "Failed to read index property, ret = %d\n",
+			      ret);
+		return ret;
+	}
+	vo_qos_cfg(die_id);
 	return component_add(dev, &dc_component_ops);
 }
 
