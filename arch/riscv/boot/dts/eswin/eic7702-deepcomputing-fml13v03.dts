@@ -129,12 +129,6 @@
 			reg = <0x2 0xfffff000 0x0 0x1000>;
 		};
 
-		mmz_nid_0_part_0 {
-			compatible = "eswin-reserve-memory";
-			reg = <0x3 0x0 0x1 0x80000000>;
-			no-map;
-		};
-
 		nid_1_zero_device_simu: nid_1_zero_device_simu@2040000000 {
 			no-map;
 			reg = <0x20 0x40000000 0x0 0x400000>;
@@ -148,12 +142,6 @@
 		d1_lpcpu_reserved: d1_g2d_8GB_boundary_reserved_4k { // 32M reserved for lpcpu
 			no-map;
 			reg = <0x21 0xfe000000 0x0 0x2000000>;
-		};
-
-		mmz_nid_1_part_0 {
-			compatible = "eswin-reserve-memory";
-			reg = <0x22 0x80000000 0x1 0x80000000>;
-			no-map;
 		};
 	};
 
@@ -183,7 +171,6 @@
 
 	backlight: backlight {
 		compatible = "pwm-backlight";
-		pinctrl-0 = <&pinctrl_die0_pwm2_default>;
 		pwms = <&pwm0 2 200000 PWM_POLARITY_INVERTED>;
 		power-supply = <&backlight_regulator>;
 		status = "okay";
@@ -936,41 +923,6 @@
 	status = "disabled";
 };
 
-&mipi_dphy_rx {
-	status = "disabled";
-};
-&d1_mipi_dphy_rx {
-	status = "disabled";
-};
-
-&csi_dma0 {
-	status = "disabled";
-};
-&d1_csi_dma0 {
-	status = "disabled";
-};
-
-&csi_dma1 {
-	status = "disabled";
-};
-&d1_csi_dma1 {
-	status = "disabled";
-};
-
-&csi2_0 {
-	status = "disabled";
-};
-&d1_csi2_0 {
-	status = "disabled";
-};
-
-&csi2_1 {
-	status = "disabled";
-};
-&d1_csi2_1 {
-	status = "disabled";
-};
-
 &sdhci_emmc {
 	/* emmc */
 	status = "disabled";
@@ -1559,7 +1511,7 @@
 	pinctrl-names = "default", "sleep";
 	pinctrl-0 = <&pinctrl_die0_pwm0_default &pinctrl_die0_pwm2_default>;
 	pinctrl-1 = <&pinctrl_die0_gpio68_default &pinctrl_die0_gpio41_default>;
-	fan-gpios = <&portc 4 GPIO_ACTIVE_HIGH>;
+	fan-pwm-gpios = <&portc 4 GPIO_ACTIVE_HIGH>;
 };
 
 &d1_pwm0 {
@@ -1569,7 +1521,7 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_die1_pwm0_default>;
 	pinctrl-1 = <&pinctrl_die1_gpio68_default>;
-	fan-gpios = <&d1_portc 4 GPIO_ACTIVE_HIGH>;
+	fan-pwm-gpios = <&d1_portc 4 GPIO_ACTIVE_HIGH>;
 };
 
 &fan_control {
@@ -1634,38 +1586,6 @@
 };
 
 &d1_rtc {
-	status = "okay";
-};
-
-&timer0 {
-	status = "okay";
-};
-
-&d1_timer0 {
-	status = "okay";
-};
-
-&timer1 {
-	status = "disabled";
-};
-
-&d1_timer1 {
-	status = "disabled";
-};
-
-&timer2 {
-	status = "okay";
-};
-
-&d1_timer2 {
-	status = "okay";
-};
-
-&timer3 {
-	status = "okay";
-};
-
-&d1_timer3 {
 	status = "okay";
 };
 
