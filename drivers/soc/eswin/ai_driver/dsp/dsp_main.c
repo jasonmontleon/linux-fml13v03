@@ -60,7 +60,6 @@
 #include <linux/dma-mapping.h>
 #include <linux/devfreq.h>
 #include <linux/pm_opp.h>
-#include <linux/eswin-win2030-sid-cfg.h>
 
 #include "eswin-khandle.h"
 
@@ -768,6 +767,7 @@ int __maybe_unused dsp_resume(struct device *dev)
 		dev_err(dev, "dsp resume mbox clock err.\n");
 		return ret;
 	}
+
 	ret = es_dsp_clk_enable(dsp);
 	if (ret < 0) {
 		dev_err(dev, "couldn't enable DSP\n");
@@ -1114,7 +1114,7 @@ static int es_dsp_hw_remove(struct platform_device *pdev)
 
 static const struct dev_pm_ops es_dsp_hw_pm_ops = { SYSTEM_SLEEP_PM_OPS(
 	dsp_suspend, dsp_resume) SET_RUNTIME_PM_OPS(dsp_runtime_suspend,
-						    dsp_runtime_resume, NULL) };
+								dsp_runtime_resume, NULL) };
 
 static struct platform_driver es_dsp_hw_driver = {
 	.probe   = es_dsp_hw_probe,
