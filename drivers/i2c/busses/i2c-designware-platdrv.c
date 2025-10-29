@@ -374,6 +374,15 @@ static int dw_i2c_plat_probe(struct platform_device *pdev)
 
 	device_enable_async_suspend(device);
 
+	/*
+	 * When there is a large amount of print information
+	 * with multiple I2c devices suspend simultaneously,
+	 * it might cause the system to crash.
+	 * @TODO we need to find the rootcause in the future.
+	 * [Current workaround]Disable I2C async suspend operation.
+	 * device_enable_async_suspend(&pdev->dev);
+	 */
+
 	/* The code below assumes runtime PM to be disabled. */
 	WARN_ON(pm_runtime_enabled(device));
 
