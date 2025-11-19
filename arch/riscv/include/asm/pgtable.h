@@ -647,8 +647,6 @@ static inline pgprot_t pgprot_writecombine(pgprot_t _prot)
 }
 #endif
 
-#define pgprot_dmacoherent pgprot_writecombine
-
 /*
  * THP functions
  */

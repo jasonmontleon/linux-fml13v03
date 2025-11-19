@@ -1130,6 +1130,13 @@ static const struct of_device_id eswin_spi_mmio_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, eswin_spi_mmio_of_match);
 
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id eswin_spi_mmio_acpi_match[] = {
+	{"eswin,bootspi", 0},
+	{}
+};
+MODULE_DEVICE_TABLE(acpi, eswin_spi_mmio_acpi_match);
+#endif
 
 static struct platform_driver eswin_spi_mmio_driver = {
 	.probe		= eswin_spi_mmio_probe,
@@ -1137,7 +1144,9 @@ static struct platform_driver eswin_spi_mmio_driver = {
 	.driver		= {
 		.name	= DRIVER_NAME,
 		.of_match_table = eswin_spi_mmio_of_match,
+#ifdef CONFIG_ACPI
 		.acpi_match_table = ACPI_PTR(eswin_spi_mmio_acpi_match),
+#endif
 	},
 };
 static int __init eswin_spi_init(void)

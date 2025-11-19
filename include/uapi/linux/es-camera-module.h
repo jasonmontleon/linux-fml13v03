@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /*
  * ESWIN camera-module driver
  *
@@ -501,8 +501,8 @@ struct esmodule_hdr_esp {
 
 struct esmodule_hdr_cfg {
     __u32 hdr_mode;
-//  struct esmodule_hdr_esp esp;
-//  struct esmodule_hdr_compr compr;
+/*  struct esmodule_hdr_esp esp; */
+/*  struct esmodule_hdr_compr compr; */
 } __attribute__ ((packed));
 
 /* sensor lvds sync code
